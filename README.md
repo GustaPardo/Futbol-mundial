@@ -54,16 +54,19 @@ También existe una instancia pública de prueba en `https://transfermarkt-api.f
 ```bash
 cd predicciones
 pip install -r requirements.txt
-python predictor.py "Iraq" "Uzbekistan"                          # cancha neutral
-python predictor.py "Iraq" "Uzbekistan" --local A                # Irak de local
-python predictor.py "Iraq" "Uzbekistan" --elo-a 1480 --elo-b 1610  # mezclar con Elo
+python predictor.py "Iraq" "Uzbekistan"              # cancha neutral
+python predictor.py "Iraq" "Uzbekistan" --local A    # Irak de local
 ```
 
 Salida: score de cada equipo (valor de mercado, edad y profundidad del plantel), los
 jugadores más valiosos, goles esperados, el marcador más probable y las probabilidades
-de victoria/empate/derrota. Los ratings Elo se buscan a mano en
-[eloratings.net](https://www.eloratings.net/) — mezclar plantel + Elo da la mejor
-predicción.
+de victoria/empate/derrota.
+
+El modelo combina automáticamente el **valor del plantel** (Transfermarkt) con el
+**rating Elo histórico** de cada selección, calculado desde 49.000 partidos
+internacionales (1872–hoy). Las constantes están calibradas con partidos reales:
+**60,7% de acierto** validado sobre 3.500 partidos de 2023+ que el modelo nunca vio
+(baseline: 47%). Para recalibrar con datos frescos: `python calibrar.py`.
 
 ## La idea detrás del scoring
 

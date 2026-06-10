@@ -2,3 +2,4 @@ __pycache__/
 *.pyc
 .venv/
 .env
+predicciones/data/results.csv

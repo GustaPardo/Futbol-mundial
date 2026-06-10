@@ -16,6 +16,8 @@ La metodología está documentada en docs/ANALISIS.md.
 """
 
 import argparse
+import csv
+import json
 import math
 import os
 import sys
@@ -27,12 +29,37 @@ API_BASE = os.environ.get("TM_API_URL", "http://localhost:8000").rstrip("/")
 # Pausa entre requests para no golpear el rate limit de la instancia pública
 PAUSA_SEGUNDOS = float(os.environ.get("TM_API_PAUSA", "1.5" if "fly.dev" in API_BASE else "0"))
 
-# Calibración del modelo de goles (ver docs/ANALISIS.md, sección 3)
-GOLES_BASE = 1.30      # goles esperados por equipo en un partido parejo en cancha neutral
-PESO_DELTA = 0.8       # convierte la diferencia de score (log10 valor mercado) en ventaja de goles
-FACTOR_LOCALIA = 1.25  # ~+0.3 goles esperados para el equipo local
-ESCALA_ELO = 250       # divisor para convertir diferencia Elo a la misma escala que el score
-MAX_GOLES = 12         # tope de goles por equipo en la grilla Poisson
+DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+# Constantes por defecto si no existe data/calibracion.json (regenerable con calibrar.py)
+CALIBRACION_DEFAULT = {"a": 0.0438, "b": 0.7580, "c": 0.2746}
+ELO_POR_SCORE = 250  # convierte la diferencia de score (log10 valor mercado) a escala Elo
+MAX_GOLES = 12       # tope de goles por equipo en la grilla Poisson
+
+
+def cargar_calibracion() -> dict:
+    """Constantes del modelo Poisson ajustadas con ~12k partidos reales (ver calibrar.py)."""
+    ruta = os.path.join(DATA_DIR, "calibracion.json")
+    if os.path.exists(ruta):
+        with open(ruta, encoding="utf-8") as f:
+            return json.load(f)
+    return CALIBRACION_DEFAULT
+
+
+def cargar_elo() -> dict[str, float]:
+    """Ratings Elo por selección, generados por calibrar.py desde el histórico de partidos."""
+    ruta = os.path.join(DATA_DIR, "elo_ratings.csv")
+    if not os.path.exists(ruta):
+        return {}
+    with open(ruta, newline="", encoding="utf-8") as f:
+        return {fila["team"].lower(): float(fila["elo"]) for fila in csv.DictReader(f)}
+
+
+def buscar_elo(tabla: dict[str, float], *nombres: str) -> float | None:
+    for nombre in nombres:
+        rating = tabla.get(nombre.lower().strip())
+        if rating is not None:
+            return rating
+    return None
 
 
 def _get(path: str) -> dict:
@@ -105,22 +132,26 @@ def lambdas_esperados(
     score_a: float,
     score_b: float,
     local: str | None = None,
-    elo_a: int | None = None,
-    elo_b: int | None = None,
+    elo_a: float | None = None,
+    elo_b: float | None = None,
 ) -> tuple[float, float]:
-    """Convierte la diferencia de scores en goles esperados de cada equipo."""
-    delta = score_a - score_b
+    """Convierte la diferencia de calidad en goles esperados, con el modelo calibrado.
+
+    log(goles) = a + b·(diff_elo/400) + c·es_local, donde diff_elo mezcla 50/50 el
+    rating Elo real (resultados históricos) con la diferencia de valor de mercado
+    del plantel convertida a escala Elo.
+    """
+    calib = cargar_calibracion()
+    a, b, c = calib["a"], calib["b"], calib["c"]
+    delta_plantel = (score_a - score_b) * ELO_POR_SCORE
     if elo_a is not None and elo_b is not None:
-        # Mezcla 50/50 con la diferencia de rating Elo (eloratings.net),
-        # que captura resultados reales y no solo calidad de plantel
-        delta = 0.5 * delta + 0.5 * (elo_a - elo_b) / ESCALA_ELO
-    lam_a = GOLES_BASE * 10 ** (0.5 * PESO_DELTA * delta)
-    lam_b = GOLES_BASE * 10 ** (-0.5 * PESO_DELTA * delta)
-    if local == "A":
-        lam_a *= FACTOR_LOCALIA
-    elif local == "B":
-        lam_b *= FACTOR_LOCALIA
-    acotar = lambda x: min(max(x, 0.2), 4.5)  # noqa: E731
+        delta = 0.5 * delta_plantel + 0.5 * (elo_a - elo_b)
+    else:
+        delta = delta_plantel
+    x = delta / 400
+    lam_a = math.exp(a + b * x + c * (local == "A"))
+    lam_b = math.exp(a - b * x + c * (local == "B"))
+    acotar = lambda v: min(max(v, 0.15), 4.5)  # noqa: E731
     return acotar(lam_a), acotar(lam_b)
 
 
@@ -174,8 +205,8 @@ def main() -> None:
     parser.add_argument("equipo_a", help="Nombre del primer equipo (ej. 'Iraq')")
     parser.add_argument("equipo_b", help="Nombre del segundo equipo (ej. 'Uzbekistan')")
     parser.add_argument("--local", choices=["A", "B"], help="Qué equipo juega de local (omitir si es cancha neutral)")
-    parser.add_argument("--elo-a", type=int, help="Rating Elo del equipo A (opcional, ver eloratings.net)")
-    parser.add_argument("--elo-b", type=int, help="Rating Elo del equipo B (opcional, ver eloratings.net)")
+    parser.add_argument("--elo-a", type=float, help="Rating Elo del equipo A (si se omite, se busca en data/elo_ratings.csv)")
+    parser.add_argument("--elo-b", type=float, help="Rating Elo del equipo B (si se omite, se busca en data/elo_ratings.csv)")
     args = parser.parse_args()
 
     print(f"API: {API_BASE}")
@@ -190,17 +221,25 @@ def main() -> None:
     sa = score_equipo(plantel_a)
     sb = score_equipo(plantel_b)
 
+    tabla_elo = cargar_elo()
+    elo_a = args.elo_a if args.elo_a is not None else buscar_elo(tabla_elo, equipo_a["name"], args.equipo_a)
+    elo_b = args.elo_b if args.elo_b is not None else buscar_elo(tabla_elo, equipo_b["name"], args.equipo_b)
+    if elo_a is None or elo_b is None:
+        faltante = args.equipo_a if elo_a is None else args.equipo_b
+        print(f"\n(No encontré rating Elo para '{faltante}'; uso solo valor de mercado del plantel)")
+        elo_a = elo_b = None
+
     mostrar_equipo(equipo_a["name"], plantel_a, sa)
     mostrar_equipo(equipo_b["name"], plantel_b, sb)
 
-    lam_a, lam_b = lambdas_esperados(sa, sb, local=args.local, elo_a=args.elo_a, elo_b=args.elo_b)
+    lam_a, lam_b = lambdas_esperados(sa, sb, local=args.local, elo_a=elo_a, elo_b=elo_b)
     p_a, p_emp, p_b, (g_a, g_b) = probabilidades(lam_a, lam_b)
 
     print(f"\n{'=' * 62}")
     if args.local:
         print(f"  Localía: equipo {args.local} juega de local")
-    if args.elo_a and args.elo_b:
-        print(f"  Elo: {args.elo_a} vs {args.elo_b} (mezclado 50/50 con valor de mercado)")
+    if elo_a is not None:
+        print(f"  Elo histórico: {elo_a:.0f} vs {elo_b:.0f} (mezclado 50/50 con valor de plantel)")
     print(f"  Goles esperados: {equipo_a['name']} {lam_a:.2f}  —  {lam_b:.2f} {equipo_b['name']}")
     print(f"  Resultado más probable: {g_a}-{g_b}")
     print(f"  {equipo_a['name']} {p_a:6.1%}  |  Empate {p_emp:6.1%}  |  {equipo_b['name']} {p_b:6.1%}")

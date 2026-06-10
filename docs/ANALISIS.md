@@ -75,52 +75,56 @@ resultado. Es el enfoque estándar en modelos de predicción de fútbol (Maher 1
 Dixon-Coles 1997) porque captura naturalmente el empate y permite incorporar localía.
 
 ```
-delta = score_A - score_B                    (diferencia de calidad de plantel)
-λ_A   = 1.30 × 10^(+0.4 × delta)             (goles esperados de A)
-λ_B   = 1.30 × 10^(-0.4 × delta)             (goles esperados de B)
-λ_local ×= 1.25                              (localía ≈ +0.3 goles, si aplica)
+log(λ_equipo) = a + b × (diff_elo / 400) + c × es_local
 ```
 
-Constantes: 1.30 = goles por equipo en un partido parejo en cancha neutral (promedio
-histórico ~2.6 goles totales); 0.8 (`PESO_DELTA`) convierte la escala log10 del valor
-de mercado en ventaja de goles; 1.25 (`FACTOR_LOCALIA`) es la ventaja de localía
-típica. Las λ se acotan a [0.2, 4.5] para partidos muy desparejos.
+donde `diff_elo` mezcla 50/50 la diferencia de rating Elo histórico con la diferencia
+de valor de mercado del plantel (convertida a escala Elo: 1 punto de score ≈ 250 Elo).
 
 Con λ_A y λ_B se calcula la probabilidad de cada marcador posible (Poisson
 independiente) y se suman: P(gana A), P(empate), P(gana B). El script también
 reporta el **marcador más probable**.
 
-### Mezcla opcional con ratings Elo
+### Calibración con 49.000 partidos reales (`calibrar.py`)
 
-El valor de mercado mide *calidad de plantel*; el rating Elo de
-[eloratings.net](https://www.eloratings.net/) mide *resultados reales históricos*.
-La literatura muestra que la combinación supera a cualquiera de los dos por separado.
-Si se pasan `--elo-a` y `--elo-b`, el modelo mezcla 50/50:
+Las constantes **no son inventadas**: `calibrar.py` las ajusta por máxima
+verosimilitud usando el histórico de partidos internacionales de
+[martj42/international_results](https://github.com/martj42/international_results)
+(49.378 partidos jugados, 1872–hoy, 336 selecciones):
 
-```
-delta = 0.5 × delta_valor_mercado + 0.5 × (elo_A - elo_B) / 250
-```
+1. **Elo propio**: recorre todo el histórico y calcula el rating de cada selección
+   con la fórmula de eloratings.net (K según torneo, multiplicador por goleada,
+   +100 de localía). Resultado en `data/elo_ratings.csv` (233 selecciones activas).
+2. **Ajuste Poisson**: con ~11.600 partidos (2010–2022) ajusta `a`, `b`, `c`.
+   Valores obtenidos: goles base 1.04, localía ×1.32, +100 Elo de diferencia → ×1.21
+   goles. Resultado en `data/calibracion.json`.
+3. **Validación honesta**: sobre 3.517 partidos posteriores (2023+) que el modelo
+   nunca vio: **60,7% de acierto** en 1X2 (baseline "siempre gana el local": 47%)
+   y log-loss 0.86 (azar uniforme: 1.10). Para referencia, los mejores modelos
+   públicos de fútbol internacional rondan 55–62%.
 
-El divisor 250 pone la diferencia Elo en una escala comparable al score (heurística
-razonable pendiente de calibración con resultados reales).
+El predictor carga el Elo automáticamente por nombre del equipo; `--elo-a/--elo-b`
+permiten pisarlo a mano. Para regenerar todo: `python calibrar.py`.
 
 ### Limitaciones conocidas (honestidad ante todo)
 
 - El valor de mercado mide *calidad de plantel*, no forma actual ni táctica.
 - Selecciones con plantel "viejo conocido" pueden estar sobrevaloradas.
 - No considera convocatoria real: usa el plantel registrado en Transfermarkt.
-- Las constantes del modelo son razonables pero no están calibradas contra un
-  histórico de partidos (ver v2, punto 4).
+- La conversión valor-de-mercado → escala Elo (×250) y la mezcla 50/50 son
+  heurísticas razonables; el componente Elo sí está calibrado con datos.
 
-## 4. Ideas para la v2
+## 4. Ideas para la v3
 
 1. **Nivel de liga del club actual**: ponderar el score si el jugador compite en una
    liga top (usar `/players/{id}/stats` + `/competitions/search`). Un delantero iraquí
    titular en la Bundesliga ≠ uno en la liga local.
 2. **Forma reciente**: goles/minutos de la última temporada desde `/players/{id}/stats`.
 3. **Disponibilidad**: cruzar con `/players/{id}/injuries`.
-4. **Calibración con resultados históricos**: bajar resultados de eliminatorias AFC/CAF
-   y ajustar `PESO_DELTA`, `GOLES_BASE` y la mezcla Elo por máxima verosimilitud.
-5. **Elo automático**: scrapear eloratings.net para no pasar los ratings a mano.
+4. **Optimizar la mezcla plantel/Elo**: ajustar el peso 50/50 y la conversión ×250
+   con datos (requiere valores de mercado históricos).
+5. **Dixon-Coles**: corregir la correlación de marcadores bajos (0-0, 1-1), que el
+   Poisson independiente subestima levemente.
 
-> Localía y mezcla con Elo ya están implementadas (`--local`, `--elo-a/--elo-b`).
+> Ya implementado: localía (`--local`), Elo automático desde el histórico,
+> calibración con resultados reales (`calibrar.py`).
