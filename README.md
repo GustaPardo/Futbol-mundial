@@ -56,6 +56,7 @@ cd predicciones
 pip install -r requirements.txt
 python predictor.py "Iraq" "Uzbekistan"              # cancha neutral
 python predictor.py "Iraq" "Uzbekistan" --local A    # Irak de local
+python predictor.py "Iraq" "Uzbekistan" --solo-elo   # sin internet: solo Elo histórico
 ```
 
 Salida: score de cada equipo (valor de mercado, edad y profundidad del plantel), los

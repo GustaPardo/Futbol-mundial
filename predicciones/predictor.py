@@ -129,8 +129,8 @@ def score_equipo(plantel: list[dict]) -> float:
 
 
 def lambdas_esperados(
-    score_a: float,
-    score_b: float,
+    score_a: float | None,
+    score_b: float | None,
     local: str | None = None,
     elo_a: float | None = None,
     elo_b: float | None = None,
@@ -139,15 +139,20 @@ def lambdas_esperados(
 
     log(goles) = a + b·(diff_elo/400) + c·es_local, donde diff_elo mezcla 50/50 el
     rating Elo real (resultados históricos) con la diferencia de valor de mercado
-    del plantel convertida a escala Elo.
+    del plantel convertida a escala Elo. Si falta una de las dos fuentes, usa la otra.
     """
     calib = cargar_calibracion()
     a, b, c = calib["a"], calib["b"], calib["c"]
-    delta_plantel = (score_a - score_b) * ELO_POR_SCORE
-    if elo_a is not None and elo_b is not None:
-        delta = 0.5 * delta_plantel + 0.5 * (elo_a - elo_b)
+    hay_plantel = score_a is not None and score_b is not None
+    hay_elo = elo_a is not None and elo_b is not None
+    if not hay_plantel and not hay_elo:
+        raise ValueError("se necesita al menos una fuente: scores de plantel o ratings Elo")
+    if hay_plantel and hay_elo:
+        delta = 0.5 * (score_a - score_b) * ELO_POR_SCORE + 0.5 * (elo_a - elo_b)
+    elif hay_plantel:
+        delta = (score_a - score_b) * ELO_POR_SCORE
     else:
-        delta = delta_plantel
+        delta = elo_a - elo_b
     x = delta / 400
     lam_a = math.exp(a + b * x + c * (local == "A"))
     lam_b = math.exp(a - b * x + c * (local == "B"))
@@ -207,30 +212,40 @@ def main() -> None:
     parser.add_argument("--local", choices=["A", "B"], help="Qué equipo juega de local (omitir si es cancha neutral)")
     parser.add_argument("--elo-a", type=float, help="Rating Elo del equipo A (si se omite, se busca en data/elo_ratings.csv)")
     parser.add_argument("--elo-b", type=float, help="Rating Elo del equipo B (si se omite, se busca en data/elo_ratings.csv)")
+    parser.add_argument("--solo-elo", action="store_true",
+                        help="No consultar Transfermarkt: predecir solo con el Elo histórico (funciona sin internet)")
     args = parser.parse_args()
 
-    print(f"API: {API_BASE}")
-    print(f"Buscando '{args.equipo_a}'...")
-    equipo_a = buscar_equipo(args.equipo_a)
-    print(f"Buscando '{args.equipo_b}'...")
-    equipo_b = buscar_equipo(args.equipo_b)
-
-    plantel_a = obtener_plantel(equipo_a["id"])
-    plantel_b = obtener_plantel(equipo_b["id"])
-
-    sa = score_equipo(plantel_a)
-    sb = score_equipo(plantel_b)
-
     tabla_elo = cargar_elo()
+    if args.solo_elo:
+        equipo_a, equipo_b = {"name": args.equipo_a}, {"name": args.equipo_b}
+        sa = sb = None
+    else:
+        print(f"API: {API_BASE}")
+        print(f"Buscando '{args.equipo_a}'...")
+        equipo_a = buscar_equipo(args.equipo_a)
+        print(f"Buscando '{args.equipo_b}'...")
+        equipo_b = buscar_equipo(args.equipo_b)
+        plantel_a = obtener_plantel(equipo_a["id"])
+        plantel_b = obtener_plantel(equipo_b["id"])
+        sa = score_equipo(plantel_a)
+        sb = score_equipo(plantel_b)
+
     elo_a = args.elo_a if args.elo_a is not None else buscar_elo(tabla_elo, equipo_a["name"], args.equipo_a)
     elo_b = args.elo_b if args.elo_b is not None else buscar_elo(tabla_elo, equipo_b["name"], args.equipo_b)
     if elo_a is None or elo_b is None:
         faltante = args.equipo_a if elo_a is None else args.equipo_b
+        if args.solo_elo:
+            sys.exit(f"No encontré rating Elo para '{faltante}' en data/elo_ratings.csv "
+                     "(probá el nombre en inglés, ej. 'Iraq') y --solo-elo no tiene otra fuente.")
         print(f"\n(No encontré rating Elo para '{faltante}'; uso solo valor de mercado del plantel)")
         elo_a = elo_b = None
 
-    mostrar_equipo(equipo_a["name"], plantel_a, sa)
-    mostrar_equipo(equipo_b["name"], plantel_b, sb)
+    if args.solo_elo:
+        print(f"\n{equipo_a['name']}: Elo {elo_a:.0f}  |  {equipo_b['name']}: Elo {elo_b:.0f}")
+    else:
+        mostrar_equipo(equipo_a["name"], plantel_a, sa)
+        mostrar_equipo(equipo_b["name"], plantel_b, sb)
 
     lam_a, lam_b = lambdas_esperados(sa, sb, local=args.local, elo_a=elo_a, elo_b=elo_b)
     p_a, p_emp, p_b, (g_a, g_b) = probabilidades(lam_a, lam_b)
@@ -239,12 +254,16 @@ def main() -> None:
     if args.local:
         print(f"  Localía: equipo {args.local} juega de local")
     if elo_a is not None:
-        print(f"  Elo histórico: {elo_a:.0f} vs {elo_b:.0f} (mezclado 50/50 con valor de plantel)")
+        mezcla = "solo Elo, sin datos de plantel" if args.solo_elo else "mezclado 50/50 con valor de plantel"
+        print(f"  Elo histórico: {elo_a:.0f} vs {elo_b:.0f} ({mezcla})")
     print(f"  Goles esperados: {equipo_a['name']} {lam_a:.2f}  —  {lam_b:.2f} {equipo_b['name']}")
     print(f"  Resultado más probable: {g_a}-{g_b}")
     print(f"  {equipo_a['name']} {p_a:6.1%}  |  Empate {p_emp:6.1%}  |  {equipo_b['name']} {p_b:6.1%}")
     print(f"{'=' * 62}")
-    print("\nNota: el score se basa en valor de mercado + edad del plantel.")
+    if args.solo_elo:
+        print("\nNota: predicción solo con Elo histórico (sin plantel de Transfermarkt).")
+    else:
+        print("\nNota: el score se basa en valor de mercado + edad del plantel.")
     print("No considera forma reciente ni convocatoria real. Ver docs/ANALISIS.md.")
 
 
