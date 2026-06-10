@@ -82,6 +82,31 @@ class TransfermarktClubPlayers(TransfermarktBase):
         players_marketvalues = self.get_list_by_xpath(Clubs.Players.MARKET_VALUES)
         players_statuses = ["; ".join(e.xpath(Clubs.Players.STATUSES)) for e in page_players_infos if e is not None]
 
+        # Patch local (no está en el upstream): las páginas de selecciones nacionales
+        # no tienen columnas como contrato/fichado de/se unió, así que esas listas
+        # quedan vacías y el zip() colapsaría a 0 jugadores. Rellenar con None hasta
+        # la cantidad de jugadores detectada.
+        n = len(players_ids)
+
+        def _completar(lista: list) -> list:
+            lista = list(lista)
+            return lista + [None] * (n - len(lista)) if len(lista) < n else lista[:n]
+
+        players_names = _completar(players_names)
+        players_positions = _completar(players_positions)
+        players_dobs = _completar(players_dobs)
+        players_ages = _completar(players_ages)
+        players_nationalities = _completar(players_nationalities)
+        players_current_club = _completar(players_current_club)
+        players_heights = _completar(players_heights)
+        players_foots = _completar(players_foots)
+        players_joined_on = _completar(players_joined_on)
+        players_joined = _completar(players_joined)
+        players_signed_from = _completar(players_signed_from)
+        players_contracts = _completar(players_contracts)
+        players_marketvalues = _completar(players_marketvalues)
+        players_statuses = _completar(players_statuses)
+
         return [
             {
                 "id": idx,
