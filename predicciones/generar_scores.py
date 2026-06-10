@@ -201,7 +201,8 @@ def main() -> None:
             valor_total = sum(j.get("marketValue") or 0 for j in aptos)
             filas.append([nombre, round(score, 4), valor_total, len(aptos), club["name"], club["id"]])
             nota_lesion = f", {len(lesionados)} lesionados afuera" if lesionados else ""
-            print(f"  ✔ {nombre:<22} score {score:.3f}  ({club['name']}, {len(aptos)} aptos, {detalle}{nota_lesion})")
+            print(f"  ✔ {nombre:<22} score {score:.3f}  valor €{valor_total/1e6:5.0f}M  "
+                  f"({club['name']}, {len(aptos)} aptos, {detalle}{nota_lesion})")
         except Exception as e:  # noqa: BLE001 — seguir con el resto y reportar al final
             errores.append((nombre, str(e)))
             print(f"  ✘ {nombre:<22} ERROR: {e}")

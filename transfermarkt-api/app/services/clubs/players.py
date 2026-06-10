@@ -53,8 +53,18 @@ class TransfermarktClubPlayers(TransfermarktBase):
         page_players_joined_on = self.page.xpath(
             Clubs.Players.Past.PAGE_JOINED_ON if self.past else Clubs.Players.Present.PAGE_JOINED_ON,
         )
-        players_ids = [extract_from_url(url) for url in self.get_list_by_xpath(Clubs.Players.URLS)]
+        players_urls = self.get_list_by_xpath(Clubs.Players.URLS)
+        players_ids = [extract_from_url(url) for url in players_urls]
         players_names = self.get_list_by_xpath(Clubs.Players.NAMES)
+        # Patch local (no está en el upstream): en las páginas de selecciones
+        # nacionales el XPath de nombres (clase 'posrela') no matchea, así que
+        # derivamos el nombre del slug de la URL del jugador (ej.
+        # "/lionel-messi/profil/spieler/28003" -> "Lionel Messi").
+        if len(players_names) < len(players_ids):
+            players_names = [
+                (extract_from_url(url, "code") or "").replace("-", " ").title() or pid
+                for url, pid in zip(players_urls, players_ids)
+            ]
         players_positions = self.get_list_by_xpath(Clubs.Players.POSITIONS)
         players_dobs = [
             safe_regex(dob_age, REGEX_DOB, "dob") for dob_age in self.get_list_by_xpath(Clubs.Players.DOB_AGE)
