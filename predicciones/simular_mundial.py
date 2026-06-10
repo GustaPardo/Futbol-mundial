@@ -125,16 +125,24 @@ VENTANA_CLASIFICACION = ("2023-01-01", "2026-04-01")  # ciclo de eliminatorias d
 
 
 def forma_clasificacion(equipos: list[str]) -> dict[str, dict]:
-    """Rendimiento de cada mundialista en su clasificación, comparado con lo esperado por Elo.
+    """Forma reciente de cada mundialista: rendimiento real vs esperado por Elo,
+    con más peso a los partidos más recientes (inercia/momentum).
 
-    Recorre el histórico recalculando el Elo partido a partido; en la ventana del
-    ciclo 2026 registra, para cada partido de eliminatorias del equipo, la
+    Recorre el histórico recalculando el Elo partido a partido. En la ventana del
+    ciclo 2026 toma los partidos OFICIALES de cada equipo (eliminatorias, Nations
+    League, Copa América/Euro, etc., sin amistosos) y, para cada uno, mide la
     diferencia entre el resultado real (1/0.5/0) y el esperado por Elo. El promedio
-    ("forma") mide cuánto sobre-rindió o sub-rindió al clasificar, y se convierte
-    en un bonus de rating acotado a ±40 Elo. Los anfitriones (no jugaron
-    eliminatorias) usan sus otros partidos oficiales del ciclo como respaldo.
+    pondera más los últimos partidos (decaimiento 0.88 por antigüedad), así un
+    equipo "caliente" pesa más que uno que arrancó bien y se apagó. Se convierte
+    en un bonus de rating acotado a ±60 Elo. Además guarda aparte el registro de
+    eliminatorias (cómo clasificó) para mostrarlo en la tabla.
     """
     from calibrar import ELO_INICIAL, k_torneo
+
+    decay = 0.88        # peso de cada partido respecto al siguiente más reciente
+    escala_bonus = 240  # convierte el delta ponderado en puntos de Elo
+    tope_bonus = 60.0
+    max_partidos = 20   # cuántos partidos recientes mirar como mucho
 
     ruta = os.path.join(DATA_DIR, "results.csv")
     with open(ruta, newline="", encoding="utf-8") as f:
@@ -143,8 +151,8 @@ def forma_clasificacion(equipos: list[str]) -> dict[str, dict]:
 
     objetivo = set(equipos)
     elo: dict[str, float] = {}
-    registros: dict[str, list] = {e: [] for e in equipos}    # eliminatorias
-    respaldo: dict[str, list] = {e: [] for e in equipos}     # otros torneos oficiales del ciclo
+    oficiales: dict[str, list] = {e: [] for e in equipos}    # todos los oficiales (para el bonus)
+    eliminat: dict[str, list] = {e: [] for e in equipos}     # solo eliminatorias (para mostrar)
     for p in partidos:
         local, visita = p["home_team"], p["away_team"]
         gl, gv = int(p["home_score"]), int(p["away_score"])
@@ -162,10 +170,10 @@ def forma_clasificacion(equipos: list[str]) -> dict[str, dict]:
                 (visita, 1 - resultado_local, 1 - esperado_local, gv, gl),
             ):
                 if equipo in objetivo:
+                    if es_oficial:
+                        oficiales[equipo].append((p["date"], resultado, esperado, gf, gc))
                     if es_eliminatoria:
-                        registros[equipo].append((resultado, esperado, gf, gc))
-                    elif es_oficial:
-                        respaldo[equipo].append((resultado, esperado, gf, gc))
+                        eliminat[equipo].append((resultado, gf, gc))
 
         cambio = k_torneo(p["tournament"]) * multiplicador_goles(abs(gl - gv)) * (resultado_local - esperado_local)
         elo[local] = el + cambio
@@ -173,35 +181,39 @@ def forma_clasificacion(equipos: list[str]) -> dict[str, dict]:
 
     forma: dict[str, dict] = {}
     for e in equipos:
-        datos = registros[e] if len(registros[e]) >= 4 else respaldo[e]
-        fuente = "eliminatorias" if len(registros[e]) >= 4 else "otros oficiales"
-        if len(datos) < 4:
+        recientes = sorted(oficiales[e], reverse=True)[:max_partidos]  # más nuevos primero
+        elim = eliminat[e]
+        if len(recientes) < 4:
             forma[e] = {"bonus": 0.0, "pj": 0, "g": 0, "emp": 0, "p": 0,
                         "gf": 0, "gc": 0, "forma": 0.0, "fuente": "sin datos"}
             continue
-        delta = sum(r - esp for r, esp, _, _ in datos) / len(datos)
+        peso_total = sum(decay**i for i in range(len(recientes)))
+        delta = sum(decay**i * (r - esp) for i, (_, r, esp, _, _) in enumerate(recientes)) / peso_total
+        # Para mostrar: si jugó eliminatorias, su registro; si no (anfitrión), los oficiales
+        muestra = elim if elim else [(r, gf, gc) for _, r, _, gf, gc in recientes]
         forma[e] = {
-            "bonus": max(min(150 * delta, 40.0), -40.0),
-            "pj": len(datos),
-            "g": sum(1 for r, _, _, _ in datos if r == 1.0),
-            "emp": sum(1 for r, _, _, _ in datos if r == 0.5),
-            "p": sum(1 for r, _, _, _ in datos if r == 0.0),
-            "gf": sum(gf for _, _, gf, _ in datos),
-            "gc": sum(gc for _, _, _, gc in datos),
+            "bonus": max(min(escala_bonus * delta, tope_bonus), -tope_bonus),
+            "pj": len(muestra),
+            "g": sum(1 for r, _, _ in muestra if r == 1.0),
+            "emp": sum(1 for r, _, _ in muestra if r == 0.5),
+            "p": sum(1 for r, _, _ in muestra if r == 0.0),
+            "gf": sum(gf for _, gf, _ in muestra),
+            "gc": sum(gc for _, _, gc in muestra),
             "forma": delta,
-            "fuente": fuente,
+            "fuente": "eliminatorias" if elim else "otros oficiales",
         }
     return forma
 
 
 def aplicar_forma(ratings: dict[str, float], equipos: list[str], verboso: bool = True) -> dict[str, float]:
-    """Suma el bonus de forma clasificatoria al rating de cada mundialista."""
+    """Suma el bonus de forma reciente (con peso a los últimos partidos) al rating."""
     forma = forma_clasificacion(equipos)
     if verboso:
         orden = sorted(equipos, key=lambda e: forma[e]["bonus"], reverse=True)
         arriba = ", ".join(f"{e} {forma[e]['bonus']:+.0f}" for e in orden[:3])
         abajo = ", ".join(f"{e} {forma[e]['bonus']:+.0f}" for e in orden[-3:])
-        print(f"Forma clasificatoria aplicada (±40 Elo máx). Mejores: {arriba}. Peores: {abajo}.")
+        print(f"Forma reciente aplicada (±60 Elo máx, más peso a los últimos partidos). "
+              f"En racha: {arriba}. En baja: {abajo}.")
     return {e: ratings[e] + forma[e]["bonus"] for e in equipos}
 
 
