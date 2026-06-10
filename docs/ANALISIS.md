@@ -127,4 +127,7 @@ permiten pisarlo a mano. Para regenerar todo: `python calibrar.py`.
    Poisson independiente subestima levemente.
 
 > Ya implementado: localía (`--local`), Elo automático desde el histórico,
-> calibración con resultados reales (`calibrar.py`).
+> calibración con resultados reales (`calibrar.py`), simulador del Mundial con
+> la llave oficial FIFA (partidos 73–104), Elo dinámico durante el torneo,
+> localía aproximada de los anfitriones en eliminación directa, y descuento de
+> lesionados al generar scores de plantel (`generar_scores.py`).

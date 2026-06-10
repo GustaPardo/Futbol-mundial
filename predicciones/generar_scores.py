@@ -26,6 +26,22 @@ ALIAS = {
     "South Korea": "South Korea",
 }
 
+# Palabras en el campo `status` del plantel de Transfermarkt que indican lesión
+PALABRAS_LESION = ("injur", "tear", "ruptur", "surgery", "cruciate", "torn",
+                   "fracture", "broken", "strain", "rehab", "ill", "problems")
+
+
+def descontar_lesionados(plantel: list[dict]) -> tuple[list[dict], list[str]]:
+    """Excluye del score a los jugadores cuyo estado en Transfermarkt indica lesión."""
+    aptos, lesionados = [], []
+    for j in plantel:
+        estado = (j.get("status") or "").lower()
+        if any(palabra in estado for palabra in PALABRAS_LESION):
+            lesionados.append(j["name"])
+        else:
+            aptos.append(j)
+    return aptos, lesionados
+
 
 def main() -> None:
     fixture, _, _ = cargar()
@@ -45,10 +61,12 @@ def main() -> None:
             plantel = obtener_plantel(club["id"])
             if not plantel:
                 raise ValueError(f"plantel vacío para id={club['id']}")
-            score = score_equipo(plantel)
-            valor_total = sum(j.get("marketValue") or 0 for j in plantel)
-            filas.append([nombre, round(score, 4), valor_total, len(plantel), club["name"], club["id"]])
-            print(f"  ✔ {nombre:<22} score {score:.3f}  ({club['name']}, {len(plantel)} jugadores)")
+            aptos, lesionados = descontar_lesionados(plantel)
+            score = score_equipo(aptos)
+            valor_total = sum(j.get("marketValue") or 0 for j in aptos)
+            filas.append([nombre, round(score, 4), valor_total, len(aptos), club["name"], club["id"]])
+            nota_lesion = f", {len(lesionados)} lesionados afuera: {', '.join(lesionados)}" if lesionados else ""
+            print(f"  ✔ {nombre:<22} score {score:.3f}  ({club['name']}, {len(aptos)} aptos{nota_lesion})")
         except Exception as e:  # noqa: BLE001 — seguir con el resto y reportar al final
             errores.append((nombre, str(e)))
             print(f"  ✘ {nombre:<22} ERROR: {e}")
