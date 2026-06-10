@@ -2,11 +2,14 @@
 """Predictor de partidos entre selecciones usando datos de Transfermarkt.
 
 Usa la API de transfermarkt-api (carpeta ../transfermarkt-api de este repo)
-para obtener el plantel de cada equipo y calcular un score basado en valor
-de mercado, edad y profundidad del plantel.
+para obtener el plantel de cada equipo, calcular un score basado en valor
+de mercado y edad, y estimar probabilidades de victoria/empate/derrota con
+un modelo de goles tipo Poisson.
 
 Uso:
     python predictor.py "Iraq" "Uzbekistan"
+    python predictor.py "Iraq" "Uzbekistan" --local A
+    python predictor.py "Iraq" "Brazil" --elo-a 1480 --elo-b 2100
     TM_API_URL=https://transfermarkt-api.fly.dev python predictor.py "Iraq" "Jordan"
 
 La metodología está documentada en docs/ANALISIS.md.
@@ -23,7 +26,13 @@ import requests
 API_BASE = os.environ.get("TM_API_URL", "http://localhost:8000").rstrip("/")
 # Pausa entre requests para no golpear el rate limit de la instancia pública
 PAUSA_SEGUNDOS = float(os.environ.get("TM_API_PAUSA", "1.5" if "fly.dev" in API_BASE else "0"))
-ESCALA_ELO = 0.5
+
+# Calibración del modelo de goles (ver docs/ANALISIS.md, sección 3)
+GOLES_BASE = 1.30      # goles esperados por equipo en un partido parejo en cancha neutral
+PESO_DELTA = 0.8       # convierte la diferencia de score (log10 valor mercado) en ventaja de goles
+FACTOR_LOCALIA = 1.25  # ~+0.3 goles esperados para el equipo local
+ESCALA_ELO = 250       # divisor para convertir diferencia Elo a la misma escala que el score
+MAX_GOLES = 12         # tope de goles por equipo en la grilla Poisson
 
 
 def _get(path: str) -> dict:
@@ -92,14 +101,52 @@ def score_equipo(plantel: list[dict]) -> float:
     return score
 
 
-def probabilidades(score_a: float, score_b: float) -> tuple[float, float, float]:
-    """Devuelve (p_gana_a, p_empate, p_gana_b) con un modelo tipo Elo."""
-    diff = score_a - score_b
-    esperanza_a = 1 / (1 + 10 ** (-diff / ESCALA_ELO))
-    p_empate = 0.30 * math.exp(-abs(diff))
-    p_a = esperanza_a * (1 - p_empate)
-    p_b = (1 - esperanza_a) * (1 - p_empate)
-    return p_a, p_empate, p_b
+def lambdas_esperados(
+    score_a: float,
+    score_b: float,
+    local: str | None = None,
+    elo_a: int | None = None,
+    elo_b: int | None = None,
+) -> tuple[float, float]:
+    """Convierte la diferencia de scores en goles esperados de cada equipo."""
+    delta = score_a - score_b
+    if elo_a is not None and elo_b is not None:
+        # Mezcla 50/50 con la diferencia de rating Elo (eloratings.net),
+        # que captura resultados reales y no solo calidad de plantel
+        delta = 0.5 * delta + 0.5 * (elo_a - elo_b) / ESCALA_ELO
+    lam_a = GOLES_BASE * 10 ** (0.5 * PESO_DELTA * delta)
+    lam_b = GOLES_BASE * 10 ** (-0.5 * PESO_DELTA * delta)
+    if local == "A":
+        lam_a *= FACTOR_LOCALIA
+    elif local == "B":
+        lam_b *= FACTOR_LOCALIA
+    acotar = lambda x: min(max(x, 0.2), 4.5)  # noqa: E731
+    return acotar(lam_a), acotar(lam_b)
+
+
+def poisson(k: int, lam: float) -> float:
+    return math.exp(-lam) * lam**k / math.factorial(k)
+
+
+def probabilidades(lam_a: float, lam_b: float) -> tuple[float, float, float, tuple[int, int]]:
+    """Devuelve (p_gana_a, p_empate, p_gana_b, resultado_mas_probable) sumando la grilla Poisson."""
+    p_a = p_emp = p_b = 0.0
+    mejor_resultado = (0, 0)
+    p_mejor = 0.0
+    for goles_a in range(MAX_GOLES + 1):
+        for goles_b in range(MAX_GOLES + 1):
+            p = poisson(goles_a, lam_a) * poisson(goles_b, lam_b)
+            if goles_a > goles_b:
+                p_a += p
+            elif goles_a == goles_b:
+                p_emp += p
+            else:
+                p_b += p
+            if p > p_mejor:
+                p_mejor, mejor_resultado = p, (goles_a, goles_b)
+    # Normalizar la masa de probabilidad que queda fuera de la grilla
+    total = p_a + p_emp + p_b
+    return p_a / total, p_emp / total, p_b / total, mejor_resultado
 
 
 def formato_valor(valor: int | None) -> str:
@@ -126,6 +173,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Compara dos selecciones/equipos con datos de Transfermarkt.")
     parser.add_argument("equipo_a", help="Nombre del primer equipo (ej. 'Iraq')")
     parser.add_argument("equipo_b", help="Nombre del segundo equipo (ej. 'Uzbekistan')")
+    parser.add_argument("--local", choices=["A", "B"], help="Qué equipo juega de local (omitir si es cancha neutral)")
+    parser.add_argument("--elo-a", type=int, help="Rating Elo del equipo A (opcional, ver eloratings.net)")
+    parser.add_argument("--elo-b", type=int, help="Rating Elo del equipo B (opcional, ver eloratings.net)")
     args = parser.parse_args()
 
     print(f"API: {API_BASE}")
@@ -143,12 +193,20 @@ def main() -> None:
     mostrar_equipo(equipo_a["name"], plantel_a, sa)
     mostrar_equipo(equipo_b["name"], plantel_b, sb)
 
-    p_a, p_emp, p_b = probabilidades(sa, sb)
-    print(f"\n{'=' * 60}")
+    lam_a, lam_b = lambdas_esperados(sa, sb, local=args.local, elo_a=args.elo_a, elo_b=args.elo_b)
+    p_a, p_emp, p_b, (g_a, g_b) = probabilidades(lam_a, lam_b)
+
+    print(f"\n{'=' * 62}")
+    if args.local:
+        print(f"  Localía: equipo {args.local} juega de local")
+    if args.elo_a and args.elo_b:
+        print(f"  Elo: {args.elo_a} vs {args.elo_b} (mezclado 50/50 con valor de mercado)")
+    print(f"  Goles esperados: {equipo_a['name']} {lam_a:.2f}  —  {lam_b:.2f} {equipo_b['name']}")
+    print(f"  Resultado más probable: {g_a}-{g_b}")
     print(f"  {equipo_a['name']} {p_a:6.1%}  |  Empate {p_emp:6.1%}  |  {equipo_b['name']} {p_b:6.1%}")
-    print(f"{'=' * 60}")
-    print("\nNota: score basado en valor de mercado + edad. No considera forma")
-    print("reciente, localía ni convocatoria real. Ver docs/ANALISIS.md.")
+    print(f"{'=' * 62}")
+    print("\nNota: el score se basa en valor de mercado + edad del plantel.")
+    print("No considera forma reciente ni convocatoria real. Ver docs/ANALISIS.md.")
 
 
 if __name__ == "__main__":

@@ -67,24 +67,50 @@ score_equipo = 0.8 × promedio(11 mejores) + 0.2 × promedio(resto del plantel)
 El equipo titular pesa mucho más, pero la profundidad del banco cuenta (torneos largos,
 lesiones, rotación).
 
-### Probabilidades del partido
+### Probabilidades del partido: modelo de goles Poisson
 
-Modelo tipo Elo sobre la diferencia de scores:
+En vez de estimar directamente "quién gana", el modelo estima **cuántos goles se
+espera que haga cada equipo** (λ) y de ahí deriva las probabilidades de cada
+resultado. Es el enfoque estándar en modelos de predicción de fútbol (Maher 1982,
+Dixon-Coles 1997) porque captura naturalmente el empate y permite incorporar localía.
 
 ```
-esperanza_A = 1 / (1 + 10^(-(score_A - score_B) / escala))
-p_empate    = 0.30 × e^(-|score_A - score_B|)   (los partidos parejos empatan más)
-p_gana_A    = esperanza_A × (1 - p_empate)
+delta = score_A - score_B                    (diferencia de calidad de plantel)
+λ_A   = 1.30 × 10^(+0.4 × delta)             (goles esperados de A)
+λ_B   = 1.30 × 10^(-0.4 × delta)             (goles esperados de B)
+λ_local ×= 1.25                              (localía ≈ +0.3 goles, si aplica)
 ```
 
-La `escala` (default 0.5) calibra cuánto pesa la diferencia: con scores en escala
-log10 del valor de mercado, ~0.5 puntos de diferencia ≈ 76% de esperanza.
+Constantes: 1.30 = goles por equipo en un partido parejo en cancha neutral (promedio
+histórico ~2.6 goles totales); 0.8 (`PESO_DELTA`) convierte la escala log10 del valor
+de mercado en ventaja de goles; 1.25 (`FACTOR_LOCALIA`) es la ventaja de localía
+típica. Las λ se acotan a [0.2, 4.5] para partidos muy desparejos.
+
+Con λ_A y λ_B se calcula la probabilidad de cada marcador posible (Poisson
+independiente) y se suman: P(gana A), P(empate), P(gana B). El script también
+reporta el **marcador más probable**.
+
+### Mezcla opcional con ratings Elo
+
+El valor de mercado mide *calidad de plantel*; el rating Elo de
+[eloratings.net](https://www.eloratings.net/) mide *resultados reales históricos*.
+La literatura muestra que la combinación supera a cualquiera de los dos por separado.
+Si se pasan `--elo-a` y `--elo-b`, el modelo mezcla 50/50:
+
+```
+delta = 0.5 × delta_valor_mercado + 0.5 × (elo_A - elo_B) / 250
+```
+
+El divisor 250 pone la diferencia Elo en una escala comparable al score (heurística
+razonable pendiente de calibración con resultados reales).
 
 ### Limitaciones conocidas (honestidad ante todo)
 
-- El valor de mercado mide *calidad de plantel*, no forma actual, localía, ni táctica.
+- El valor de mercado mide *calidad de plantel*, no forma actual ni táctica.
 - Selecciones con plantel "viejo conocido" pueden estar sobrevaloradas.
 - No considera convocatoria real: usa el plantel registrado en Transfermarkt.
+- Las constantes del modelo son razonables pero no están calibradas contra un
+  histórico de partidos (ver v2, punto 4).
 
 ## 4. Ideas para la v2
 
@@ -94,6 +120,7 @@ log10 del valor de mercado, ~0.5 puntos de diferencia ≈ 76% de esperanza.
 2. **Forma reciente**: goles/minutos de la última temporada desde `/players/{id}/stats`.
 3. **Disponibilidad**: cruzar con `/players/{id}/injuries`.
 4. **Calibración con resultados históricos**: bajar resultados de eliminatorias AFC/CAF
-   y ajustar `escala` y `p_empate` por regresión logística.
-5. **Localía**: bonus fijo (~0.1–0.15 de score) para el equipo local; en eliminatorias
-   asiáticas la localía pesa muchísimo.
+   y ajustar `PESO_DELTA`, `GOLES_BASE` y la mezcla Elo por máxima verosimilitud.
+5. **Elo automático**: scrapear eloratings.net para no pasar los ratings a mano.
+
+> Localía y mezcla con Elo ya están implementadas (`--local`, `--elo-a/--elo-b`).

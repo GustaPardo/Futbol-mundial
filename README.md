@@ -13,7 +13,28 @@ donde las estadísticas tradicionales escasean.
 | [`docs/ANALISIS.md`](docs/ANALISIS.md) | Estudio del código de la API: cómo funciona, qué endpoints sirven para predicciones y metodología de scoring. |
 | [`predicciones/`](predicciones/) | Script propio que usa la API para puntuar equipos y estimar probabilidades de victoria. |
 
-## Cómo usarlo (rápido)
+## ¿Dónde lo corro?
+
+### Opción 1: Google Colab (sin instalar nada) ← la más fácil
+
+Abrí este link en el navegador y ejecutá las celdas en orden:
+
+**[▶ Abrir el predictor en Google Colab](https://colab.research.google.com/github/GustaPardo/Futbol-mundial/blob/claude/laughing-ritchie-f4b202/predicciones/predictor_colab.ipynb)**
+
+Cambiás los nombres de los equipos en la última celda y listo.
+
+### Opción 2: En tu computadora (usando la API pública)
+
+Necesitás solo Python instalado:
+
+```bash
+git clone https://github.com/GustaPardo/Futbol-mundial.git
+cd Futbol-mundial/predicciones
+pip install requests
+TM_API_URL=https://transfermarkt-api.fly.dev python predictor.py "Iraq" "Uzbekistan"
+```
+
+### Opción 3: En tu computadora con API local (más rápida, sin rate limit)
 
 ### 1. Levantar la API localmente
 
@@ -33,18 +54,16 @@ También existe una instancia pública de prueba en `https://transfermarkt-api.f
 ```bash
 cd predicciones
 pip install -r requirements.txt
-python predictor.py "Iraq" "Uzbekistan"
+python predictor.py "Iraq" "Uzbekistan"                          # cancha neutral
+python predictor.py "Iraq" "Uzbekistan" --local A                # Irak de local
+python predictor.py "Iraq" "Uzbekistan" --elo-a 1480 --elo-b 1610  # mezclar con Elo
 ```
 
-Salida: score de cada equipo (basado en valor de mercado, edad y profundidad del plantel),
-los jugadores más valiosos de cada uno, y una probabilidad estimada de
-victoria/empate/derrota.
-
-Si querés usar la instancia pública en vez de la local:
-
-```bash
-TM_API_URL=https://transfermarkt-api.fly.dev python predictor.py "Iraq" "Jordan"
-```
+Salida: score de cada equipo (valor de mercado, edad y profundidad del plantel), los
+jugadores más valiosos, goles esperados, el marcador más probable y las probabilidades
+de victoria/empate/derrota. Los ratings Elo se buscan a mano en
+[eloratings.net](https://www.eloratings.net/) — mezclar plantel + Elo da la mejor
+predicción.
 
 ## La idea detrás del scoring
 
