@@ -27,6 +27,37 @@ from collections import Counter, defaultdict
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 DESDE_FIXTURE = "2026-06-01"
+ELO_POR_SCORE = 250  # misma conversión score de plantel → escala Elo que usa predictor.py
+
+
+def cargar_scores_plantel() -> dict[str, float]:
+    """Scores de plantel de Transfermarkt generados por generar_scores.py (puede no existir)."""
+    ruta = os.path.join(DATA_DIR, "scores_plantel.csv")
+    if not os.path.exists(ruta):
+        return {}
+    with open(ruta, newline="", encoding="utf-8") as f:
+        return {fila["team"]: float(fila["score"]) for fila in csv.DictReader(f)}
+
+
+def mezclar_ratings(elo: dict[str, float], scores: dict[str, float], equipos: list[str]) -> dict[str, float]:
+    """Rating mixto 50% Elo + 50% plantel (en escala Elo), como el predictor de partidos.
+
+    A los equipos sin score de plantel se les imputa uno con una regresión lineal
+    score ~ elo ajustada sobre los equipos que sí tienen.
+    """
+    con_ambos = [e for e in equipos if e in scores]
+    if len(con_ambos) < len(equipos):
+        xs = [elo[e] for e in con_ambos]
+        ys = [scores[e] for e in con_ambos]
+        n = len(xs)
+        mx, my = sum(xs) / n, sum(ys) / n
+        pendiente = sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / sum((x - mx) ** 2 for x in xs)
+        ordenada = my - pendiente * mx
+        faltantes = [e for e in equipos if e not in scores]
+        print(f"(Imputando score de plantel desde el Elo para: {', '.join(faltantes)})")
+        for e in faltantes:
+            scores[e] = pendiente * elo[e] + ordenada
+    return {e: 0.5 * elo[e] + 0.5 * scores[e] * ELO_POR_SCORE for e in equipos}
 
 
 def cargar() -> tuple[list[dict], dict[str, float], dict]:
@@ -171,8 +202,17 @@ def main() -> None:
     random.seed(args.seed)
 
     fixture, elo, calib = cargar()
-    sim = Simulador(elo, calib)
-    sim.grupos = detectar_grupos(fixture)
+    grupos = detectar_grupos(fixture)
+    equipos = [e for g in grupos for e in g]
+    scores = cargar_scores_plantel()
+    if scores:
+        ratings = mezclar_ratings(elo, scores, equipos)
+        print(f"Fuerza de equipos: 50% Elo histórico + 50% plantel Transfermarkt ({len(scores)} con score)")
+    else:
+        ratings = elo
+        print("Fuerza de equipos: solo Elo histórico (corré generar_scores.py para sumar Transfermarkt)")
+    sim = Simulador(ratings, calib)
+    sim.grupos = grupos
 
     titulos: Counter = Counter()
     finales: Counter = Counter()

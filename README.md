@@ -69,6 +69,18 @@ internacionales (1872–hoy). Las constantes están calibradas con partidos real
 **60,7% de acierto** validado sobre 3.500 partidos de 2023+ que el modelo nunca vio
 (baseline: 47%). Para recalibrar con datos frescos: `python calibrar.py`.
 
+### 3. Simular el Mundial 2026 completo
+
+```bash
+python generar_scores.py        # baja los 48 planteles de Transfermarkt (~3 min, opcional)
+python simular_mundial.py       # 10.000 mundiales simulados en ~3 segundos
+```
+
+Simula la fase de grupos con el fixture real, los 8 mejores terceros y la eliminación
+directa con alargue y penales. Reporta probabilidades de título y de final por equipo.
+Si existe `data/scores_plantel.csv` (lo genera el primer script), la fuerza de cada
+equipo mezcla 50/50 plantel de Transfermarkt + Elo; si no, usa solo Elo.
+
 ## La idea detrás del scoring
 
 Para selecciones chicas casi no hay xG ni estadísticas avanzadas públicas, pero
