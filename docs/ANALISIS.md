@@ -114,20 +114,21 @@ permiten pisarlo a mano. Para regenerar todo: `python calibrar.py`.
 - La conversión valor-de-mercado → escala Elo (×250) y la mezcla 50/50 son
   heurísticas razonables; el componente Elo sí está calibrado con datos.
 
-## 4. Ideas para la v3
+## 4. Ideas para la v4
 
-1. **Nivel de liga del club actual**: ponderar el score si el jugador compite en una
-   liga top (usar `/players/{id}/stats` + `/competitions/search`). Un delantero iraquí
-   titular en la Bundesliga ≠ uno en la liga local.
-2. **Forma reciente**: goles/minutos de la última temporada desde `/players/{id}/stats`.
-3. **Disponibilidad**: cruzar con `/players/{id}/injuries`.
-4. **Optimizar la mezcla plantel/Elo**: ajustar el peso 50/50 y la conversión ×250
+1. **Disponibilidad fina**: cruzar con `/players/{id}/injuries` para distinguir
+   lesión larga de molestia menor (hoy el descuento es por el status del plantel).
+2. **Optimizar la mezcla plantel/Elo**: ajustar el peso 50/50 y la conversión ×250
    con datos (requiere valores de mercado históricos).
-5. **Dixon-Coles**: corregir la correlación de marcadores bajos (0-0, 1-1), que el
+3. **Dixon-Coles**: corregir la correlación de marcadores bajos (0-0, 1-1), que el
    Poisson independiente subestima levemente.
+4. **Calibrar los pesos del ajuste por stats** (nivel/rodaje/producción) contra
+   resultados reales en vez de usar constantes razonables.
 
 > Ya implementado: localía (`--local`), Elo automático desde el histórico,
 > calibración con resultados reales (`calibrar.py`), simulador del Mundial con
 > la llave oficial FIFA (partidos 73–104), Elo dinámico durante el torneo,
-> localía aproximada de los anfitriones en eliminación directa, y descuento de
-> lesionados al generar scores de plantel (`generar_scores.py`).
+> localía aproximada de los anfitriones en eliminación directa, descuento de
+> lesionados, y **ajuste por jugador según nivel de competencia (Champions/ligas
+> top), minutos y producción de la última temporada**
+> (`generar_scores.py --con-stats`, con caché reanudable en `data/cache_stats/`).

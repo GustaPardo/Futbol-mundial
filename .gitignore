@@ -3,3 +3,4 @@ __pycache__/
 .venv/
 .env
 predicciones/data/results.csv
+predicciones/data/cache_stats/
