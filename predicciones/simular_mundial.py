@@ -121,6 +121,90 @@ def mezclar_ratings(elo: dict[str, float], scores: dict[str, float], equipos: li
     return {e: 0.5 * elo[e] + 0.5 * scores[e] * ELO_POR_SCORE for e in equipos}
 
 
+VENTANA_CLASIFICACION = ("2023-01-01", "2026-04-01")  # ciclo de eliminatorias del Mundial 2026
+
+
+def forma_clasificacion(equipos: list[str]) -> dict[str, dict]:
+    """Rendimiento de cada mundialista en su clasificación, comparado con lo esperado por Elo.
+
+    Recorre el histórico recalculando el Elo partido a partido; en la ventana del
+    ciclo 2026 registra, para cada partido de eliminatorias del equipo, la
+    diferencia entre el resultado real (1/0.5/0) y el esperado por Elo. El promedio
+    ("forma") mide cuánto sobre-rindió o sub-rindió al clasificar, y se convierte
+    en un bonus de rating acotado a ±40 Elo. Los anfitriones (no jugaron
+    eliminatorias) usan sus otros partidos oficiales del ciclo como respaldo.
+    """
+    from calibrar import ELO_INICIAL, k_torneo
+
+    ruta = os.path.join(DATA_DIR, "results.csv")
+    with open(ruta, newline="", encoding="utf-8") as f:
+        partidos = [p for p in csv.DictReader(f) if p["home_score"] not in ("", "NA")]
+    partidos.sort(key=lambda p: p["date"])
+
+    objetivo = set(equipos)
+    elo: dict[str, float] = {}
+    registros: dict[str, list] = {e: [] for e in equipos}    # eliminatorias
+    respaldo: dict[str, list] = {e: [] for e in equipos}     # otros torneos oficiales del ciclo
+    for p in partidos:
+        local, visita = p["home_team"], p["away_team"]
+        gl, gv = int(p["home_score"]), int(p["away_score"])
+        el, ev = elo.get(local, ELO_INICIAL), elo.get(visita, ELO_INICIAL)
+        ventaja = 0 if p["neutral"] == "TRUE" else 100
+        esperado_local = 1 / (1 + 10 ** (-(el + ventaja - ev) / 400))
+        resultado_local = 1.0 if gl > gv else 0.5 if gl == gv else 0.0
+
+        if VENTANA_CLASIFICACION[0] <= p["date"] < VENTANA_CLASIFICACION[1]:
+            torneo = p["tournament"].lower()
+            es_eliminatoria = "world cup" in torneo and "qualification" in torneo
+            es_oficial = "friendly" not in torneo
+            for equipo, resultado, esperado, gf, gc in (
+                (local, resultado_local, esperado_local, gl, gv),
+                (visita, 1 - resultado_local, 1 - esperado_local, gv, gl),
+            ):
+                if equipo in objetivo:
+                    if es_eliminatoria:
+                        registros[equipo].append((resultado, esperado, gf, gc))
+                    elif es_oficial:
+                        respaldo[equipo].append((resultado, esperado, gf, gc))
+
+        cambio = k_torneo(p["tournament"]) * multiplicador_goles(abs(gl - gv)) * (resultado_local - esperado_local)
+        elo[local] = el + cambio
+        elo[visita] = ev - cambio
+
+    forma: dict[str, dict] = {}
+    for e in equipos:
+        datos = registros[e] if len(registros[e]) >= 4 else respaldo[e]
+        fuente = "eliminatorias" if len(registros[e]) >= 4 else "otros oficiales"
+        if len(datos) < 4:
+            forma[e] = {"bonus": 0.0, "pj": 0, "g": 0, "emp": 0, "p": 0,
+                        "gf": 0, "gc": 0, "forma": 0.0, "fuente": "sin datos"}
+            continue
+        delta = sum(r - esp for r, esp, _, _ in datos) / len(datos)
+        forma[e] = {
+            "bonus": max(min(150 * delta, 40.0), -40.0),
+            "pj": len(datos),
+            "g": sum(1 for r, _, _, _ in datos if r == 1.0),
+            "emp": sum(1 for r, _, _, _ in datos if r == 0.5),
+            "p": sum(1 for r, _, _, _ in datos if r == 0.0),
+            "gf": sum(gf for _, _, gf, _ in datos),
+            "gc": sum(gc for _, _, _, gc in datos),
+            "forma": delta,
+            "fuente": fuente,
+        }
+    return forma
+
+
+def aplicar_forma(ratings: dict[str, float], equipos: list[str], verboso: bool = True) -> dict[str, float]:
+    """Suma el bonus de forma clasificatoria al rating de cada mundialista."""
+    forma = forma_clasificacion(equipos)
+    if verboso:
+        orden = sorted(equipos, key=lambda e: forma[e]["bonus"], reverse=True)
+        arriba = ", ".join(f"{e} {forma[e]['bonus']:+.0f}" for e in orden[:3])
+        abajo = ", ".join(f"{e} {forma[e]['bonus']:+.0f}" for e in orden[-3:])
+        print(f"Forma clasificatoria aplicada (±40 Elo máx). Mejores: {arriba}. Peores: {abajo}.")
+    return {e: ratings[e] + forma[e]["bonus"] for e in equipos}
+
+
 def detectar_grupos(fixture: list[dict]) -> list[list[str]]:
     """Los grupos son las componentes conexas del grafo de partidos de la fase de grupos."""
     adj = defaultdict(set)
@@ -303,6 +387,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Simula el Mundial 2026 completo N veces.")
     parser.add_argument("-n", type=int, default=10_000, help="cantidad de simulaciones (default 10000)")
     parser.add_argument("--seed", type=int, default=2026)
+    parser.add_argument("--sin-forma", action="store_true",
+                        help="no aplicar el bonus por rendimiento en las eliminatorias")
     args = parser.parse_args()
     random.seed(args.seed)
 
@@ -317,6 +403,8 @@ def main() -> None:
     else:
         ratings = elo
         print("Fuerza de equipos: solo Elo histórico (corré generar_scores.py para sumar Transfermarkt)")
+    if not args.sin_forma:
+        ratings = aplicar_forma(ratings, equipos)
     sim = Simulador(ratings, calib)
 
     titulos: Counter = Counter()

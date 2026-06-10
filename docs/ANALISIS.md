@@ -125,6 +125,19 @@ permiten pisarlo a mano. Para regenerar todo: `python calibrar.py`.
 4. **Calibrar los pesos del ajuste por stats** (nivel/rodaje/producción) contra
    resultados reales en vez de usar constantes razonables.
 
+### Forma clasificatoria
+
+Además del Elo y el plantel, el modelo aplica un **bonus de forma** según cómo
+clasificó cada equipo al Mundial: recorre sus partidos de eliminatorias 2023–2026
+y promedia la diferencia entre el resultado real y el esperado por Elo en cada uno.
+Un equipo que sobre-rindió al clasificar (Noruega 8-0-0 con 37:5 → +34) llega mejor
+de lo que su historia sugiere; uno que sufrió (Brasil → −23) llega peor. El bonus
+se acota a ±40 Elo para que sea un matiz y no domine; los anfitriones (sin
+eliminatorias) usan sus otros partidos oficiales del ciclo. Nótese que premia
+*sobre-rendimiento*, no puntos brutos: Inglaterra ganó todo (22:0) pero era lo
+esperado para su Elo, así que recibe solo +16. Tabla completa:
+`python analizar.py clasificacion`. Se desactiva con `--sin-forma`.
+
 > Ya implementado: localía (`--local`), Elo automático desde el histórico,
 > calibración con resultados reales (`calibrar.py`), simulador del Mundial con
 > la llave oficial FIFA (partidos 73–104), Elo dinámico durante el torneo,

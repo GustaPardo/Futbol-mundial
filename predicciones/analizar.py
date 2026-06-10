@@ -21,9 +21,11 @@ from collections import Counter
 from simular_mundial import (
     DATA_DIR,
     Simulador,
+    aplicar_forma,
     cargar,
     cargar_scores_plantel,
     detectar_grupos,
+    forma_clasificacion,
     grupos_por_letra,
     mezclar_ratings,
 )
@@ -48,10 +50,12 @@ def preparar():
     scores = cargar_scores_plantel()
     if scores:
         ratings = mezclar_ratings(elo, scores, equipos)
-        print(f"Fuerza de equipos: 50% Elo + 50% plantel Transfermarkt ({len(scores)} con score)\n")
+        print(f"Fuerza de equipos: 50% Elo + 50% plantel Transfermarkt ({len(scores)} con score)")
     else:
         ratings = elo
-        print("Fuerza de equipos: solo Elo histórico (corré generar_scores.py para sumar Transfermarkt)\n")
+        print("Fuerza de equipos: solo Elo histórico (corré generar_scores.py para sumar Transfermarkt)")
+    ratings = aplicar_forma(ratings, equipos)
+    print()
     return fixture, letras, ratings, calib
 
 
@@ -80,6 +84,24 @@ def analizar_grupos(n: int) -> None:
             print(f"   {e:<22} 1°: {primero[e]/n:6.1%}   2°: {segundo[e]/n:6.1%}"
                   f"   clasifica: {clasifica:6.1%}")
         print()
+
+
+def analizar_clasificacion() -> None:
+    """Campaña clasificatoria de cada mundialista y su rendimiento vs lo esperado por Elo."""
+    fixture, _, _ = cargar()
+    equipos = sorted({e for g in detectar_grupos(fixture) for e in g})
+    forma = forma_clasificacion(equipos)
+    print("Cómo llegaron al Mundial: campaña y rendimiento vs lo esperado por Elo.")
+    print("El bonus (±40 Elo máx.) entra al modelo como forma clasificatoria.\n")
+    print(f"{'Equipo':<22} {'PJ':>3} {'G-E-P':>8} {'GF:GC':>7} {'Forma':>7} {'Bonus':>6}  Fuente")
+    print("-" * 72)
+    for e in sorted(equipos, key=lambda x: forma[x]["bonus"], reverse=True):
+        f = forma[e]
+        if f["fuente"] == "sin datos":
+            print(f"{e:<22} {'—':>3} {'—':>8} {'—':>7} {'—':>7} {f['bonus']:>+6.0f}  sin datos")
+            continue
+        print(f"{e:<22} {f['pj']:>3} {f['g']:>2}-{f['emp']}-{f['p']:<2} "
+              f"{f['gf']:>3}:{f['gc']:<3} {f['forma']:>+7.3f} {f['bonus']:>+6.0f}  {f['fuente']}")
 
 
 class SimuladorConRastro(Simulador):
@@ -111,7 +133,13 @@ def analizar_equipo(equipo: str, n: int) -> None:
         equipo = candidatos[0]
     letra_grupo = next(l for l, g in letras.items() if equipo in g)
     print(f"{equipo} — rating {ratings[equipo]:.0f}, grupo {letra_grupo}: "
-          + ", ".join(f"{e} ({ratings[e]:.0f})" for e in letras[letra_grupo]) + "\n")
+          + ", ".join(f"{e} ({ratings[e]:.0f})" for e in letras[letra_grupo]))
+    f = forma_clasificacion([equipo])[equipo]
+    if f["fuente"] != "sin datos":
+        print(f"Clasificación: {f['g']}G-{f['emp']}E-{f['p']}P, {f['gf']}:{f['gc']} en {f['pj']} partidos "
+              f"({f['fuente']}) → forma {f['forma']:+.3f}, bonus {f['bonus']:+.0f} Elo\n")
+    else:
+        print("Clasificación: sin datos suficientes → sin bonus de forma\n")
 
     sim = SimuladorConRastro(ratings, calib, equipo)
     etapa: Counter = Counter()
@@ -223,6 +251,7 @@ def main() -> None:
     p_t = sub.add_parser("goleador", help="goles esperados por jugador")
     p_t.add_argument("-n", type=int, default=20_000)
     p_t.add_argument("--top", type=int, default=15)
+    sub.add_parser("clasificacion", help="campaña clasificatoria y forma de cada mundialista")
     args = parser.parse_args()
     random.seed(2026)
 
@@ -230,6 +259,8 @@ def main() -> None:
         analizar_grupos(args.n)
     elif args.comando == "equipo":
         analizar_equipo(args.nombre, args.n)
+    elif args.comando == "clasificacion":
+        analizar_clasificacion()
     else:
         analizar_goleador(args.n, args.top)
 
