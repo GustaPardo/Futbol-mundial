@@ -165,6 +165,7 @@ def main() -> None:
 
     filas = []
     errores = []
+    planteles: dict[str, list[dict]] = {}
     for nombre in equipos:
         consulta = ALIAS.get(nombre, nombre)
         try:
@@ -176,6 +177,12 @@ def main() -> None:
             if not plantel:
                 raise ValueError(f"plantel vacío para id={club['id']}")
             aptos, lesionados = descontar_lesionados(plantel)
+            planteles[nombre] = [
+                {"id": j["id"], "name": j["name"], "position": j.get("position"),
+                 "age": j.get("age"), "marketValue": j.get("marketValue"),
+                 "lesionado": j["name"] in lesionados}
+                for j in plantel
+            ]
 
             if args.con_stats:
                 scores_jugadores = []
@@ -205,8 +212,10 @@ def main() -> None:
         writer = csv.writer(f)
         writer.writerow(["team", "score", "market_value_total", "players", "tm_name", "tm_id"])
         writer.writerows(filas)
+    with open(os.path.join(DATA_DIR, "planteles.json"), "w", encoding="utf-8") as f:
+        json.dump(planteles, f, ensure_ascii=False)
 
-    print(f"\nGuardado {len(filas)}/{len(equipos)} en {ruta}")
+    print(f"\nGuardado {len(filas)}/{len(equipos)} en {ruta} (+ planteles.json para analizar.py)")
     if errores:
         print("Equipos sin score (el simulador les imputa uno desde su Elo):")
         for nombre, e in errores:
