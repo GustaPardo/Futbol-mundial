@@ -69,8 +69,17 @@ ANFITRIONES_KO = {"United States": ("R32", "R16", "QF", "SF", "F"),
                   "Canada": ("R32", "R16")}
 
 
+URL_RESULTADOS = "https://raw.githubusercontent.com/martj42/international_results/master/results.csv"
+
+
 def cargar() -> tuple[list[dict], dict[str, float], dict]:
-    with open(os.path.join(DATA_DIR, "results.csv"), newline="", encoding="utf-8") as f:
+    ruta_resultados = os.path.join(DATA_DIR, "results.csv")
+    if not os.path.exists(ruta_resultados):
+        import urllib.request
+        print("Descargando el histórico de partidos (primera vez, ~4 MB)...")
+        os.makedirs(DATA_DIR, exist_ok=True)
+        urllib.request.urlretrieve(URL_RESULTADOS, ruta_resultados)
+    with open(ruta_resultados, newline="", encoding="utf-8") as f:
         fixture = [
             p for p in csv.DictReader(f)
             if p["tournament"] == "FIFA World Cup" and p["date"] >= DESDE_FIXTURE
