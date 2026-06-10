@@ -33,12 +33,20 @@ from simular_mundial import DATA_DIR, cargar, detectar_grupos
 
 CACHE_STATS = os.path.join(DATA_DIR, "cache_stats")
 
-# Nombres del dataset histórico → nombre que entiende el buscador de Transfermarkt
+# Nombres del dataset histórico → término que entiende el buscador de Transfermarkt
 ALIAS = {
     "Ivory Coast": "Cote d'Ivoire",
     "Curaçao": "Curacao",
     "United States": "United States",
     "South Korea": "South Korea",
+    "Bosnia and Herzegovina": "Bosnia",
+    "DR Congo": "DR Congo",
+    "Cape Verde": "Cape Verde",
+}
+
+# Selecciones cuyo buscador falla: ID de club de Transfermarkt directo (se saltea la búsqueda)
+CLUB_ID_OVERRIDE = {
+    "Bosnia and Herzegovina": "3446",
 }
 
 # Palabras en el campo `status` del plantel de Transfermarkt que indican lesión
@@ -94,8 +102,8 @@ def obtener_stats(player_id: str) -> list[dict]:
             return json.load(f)
     try:
         stats = _get(f"/players/{player_id}/stats").get("stats", [])
-    except Exception:  # noqa: BLE001 — jugador sin página de stats: factores neutros
-        stats = []
+    except Exception:  # noqa: BLE001 — no cachear errores: reintentar en la próxima corrida
+        return []
     os.makedirs(CACHE_STATS, exist_ok=True)
     with open(ruta, "w", encoding="utf-8") as f:
         json.dump(stats, f)
