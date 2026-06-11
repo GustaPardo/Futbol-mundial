@@ -105,6 +105,31 @@ def analizar_clasificacion() -> None:
               f"{f['gf']:>3}:{f['gc']:<3} {f['forma']:>+7.3f} {f['bonus']:>+6.0f}  {f['fuente']}")
 
 
+def analizar_partidos(dias: int | None = None) -> None:
+    """Predicción de cada partido real de la fase de grupos, en orden cronológico."""
+    from predictor import probabilidades
+
+    fixture, letras, ratings, calib = preparar()
+    sim = Simulador(ratings, calib)
+    sim.r = dict(sim.base)
+    grupo_de = {e: letra for letra, g in letras.items() for e in g}
+    fechas = sorted({p["date"] for p in fixture})
+    if dias:
+        fechas = fechas[:dias]
+        print(f"Primeros {dias} días del fixture (usá --dias 0 para ver todo):\n")
+    for fecha in fechas:
+        print(f"--- {fecha} ---")
+        for p in (q for q in fixture if q["date"] == fecha):
+            a, b = p["home_team"], p["away_team"]
+            es_local = p["neutral"] == "FALSE"
+            lam_a, lam_b = sim.lambdas(a, b, local_a=es_local)
+            p_a, p_emp, p_b, (g_a, g_b) = probabilidades(lam_a, lam_b)
+            etiqueta = f"{a}{' (local)' if es_local else ''} vs {b}"
+            print(f"  [{grupo_de[a]}] {etiqueta:<42} {p_a:5.0%} / {p_emp:4.0%} / {p_b:5.0%}"
+                  f"   marcador: {g_a}-{g_b}")
+        print()
+
+
 class SimuladorConRastro(Simulador):
     """Simulador que registra los cruces de eliminación directa de un equipo."""
 
@@ -253,6 +278,8 @@ def main() -> None:
     p_t.add_argument("-n", type=int, default=20_000)
     p_t.add_argument("--top", type=int, default=15)
     sub.add_parser("clasificacion", help="campaña clasificatoria y forma de cada mundialista")
+    p_p = sub.add_parser("partidos", help="predicción de cada partido real de la fase de grupos")
+    p_p.add_argument("--dias", type=int, default=0, help="mostrar solo los primeros N días (0 = todos)")
     args = parser.parse_args()
     random.seed(2026)
 
@@ -262,6 +289,8 @@ def main() -> None:
         analizar_equipo(args.nombre, args.n)
     elif args.comando == "clasificacion":
         analizar_clasificacion()
+    elif args.comando == "partidos":
+        analizar_partidos(args.dias or None)
     else:
         analizar_goleador(args.n, args.top)
 
