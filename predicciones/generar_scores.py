@@ -27,6 +27,7 @@ import csv
 import json
 import math
 import os
+import sys
 
 from predictor import API_BASE, _get, obtener_plantel, score_jugador
 from simular_mundial import DATA_DIR, cargar, detectar_grupos
@@ -127,8 +128,9 @@ def obtener_stats(player_id: str) -> list[dict]:
     except Exception:  # noqa: BLE001 — no cachear errores: reintentar en la próxima corrida
         return []
     os.makedirs(CACHE_STATS, exist_ok=True)
-    with open(ruta, "w", encoding="utf-8") as f:
-        json.dump(stats, f)
+    if stats:  # no cachear respuestas vacías: pueden ser un fallo transitorio del parser
+        with open(ruta, "w", encoding="utf-8") as f:
+            json.dump(stats, f)
     return stats
 
 
@@ -192,6 +194,14 @@ def main() -> None:
     print(f"API: {API_BASE}")
     modo = "profundo (con stats por jugador)" if args.con_stats else "rápido (valor de mercado + edad)"
     print(f"Modo {modo}. Generando scores para {len(equipos)} selecciones...\n")
+
+    if args.con_stats and not obtener_stats("28003"):  # autochequeo con Messi antes de la corrida larga
+        sys.exit(
+            "✘ ABORTADO: el endpoint /players/{id}/stats no devuelve datos (probado con Messi).\n"
+            "  Correr la corrida larga así sería tirar 20 minutos: el ajuste daría ×1.00 en todo.\n"
+            "  Diagnóstico: python diagnostico.py  (pegá la salida completa en el chat)\n"
+            "  Alternativa mientras tanto: MODO = \"rapido\" (sin ajuste por nivel de liga)."
+        )
 
     filas = []
     errores = []
