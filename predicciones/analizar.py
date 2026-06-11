@@ -91,8 +91,9 @@ def analizar_clasificacion() -> None:
     fixture, _, _ = cargar()
     equipos = sorted({e for g in detectar_grupos(fixture) for e in g})
     forma = forma_clasificacion(equipos)
-    print("Cómo llegaron al Mundial: campaña de eliminatorias y forma reciente vs lo esperado por Elo.")
-    print("El bonus (±60 Elo máx., con más peso a los últimos partidos) entra al modelo.\n")
+    print("Cómo llegaron al Mundial: campaña de eliminatorias y forma vs lo esperado por Elo.")
+    print("Tabla descriptiva: la auditoría (auditar_modelo.py) midió que el peso óptimo de")
+    print("esta señal es 0 — el Elo dinámico ya contiene la racha de cada equipo.\n")
     print(f"{'Equipo':<22} {'PJ':>3} {'G-E-P':>8} {'GF:GC':>7} {'Forma':>7} {'Bonus':>6}  Fuente")
     print("-" * 72)
     for e in sorted(equipos, key=lambda x: forma[x]["bonus"], reverse=True):

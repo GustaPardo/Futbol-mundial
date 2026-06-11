@@ -125,18 +125,35 @@ permiten pisarlo a mano. Para regenerar todo: `python calibrar.py`.
 4. **Calibrar los pesos del ajuste por stats** (nivel/rodaje/producción) contra
    resultados reales en vez de usar constantes razonables.
 
-### Forma clasificatoria
+### Forma clasificatoria: auditada y con peso 0 (honestidad matemática)
 
-Además del Elo y el plantel, el modelo aplica un **bonus de forma reciente** según
-el rendimiento de cada equipo en sus últimos partidos oficiales del ciclo 2026
-(eliminatorias, Nations League, Copa América/Euro; sin amistosos), comparado con
-lo esperado por su Elo. Los partidos más recientes pesan más (decaimiento 0.88 por
-antigüedad), para capturar la **inercia/momentum**: un equipo "caliente" pesa más
-que uno que arrancó bien y se apagó. El bonus se acota a ±60 Elo. Un equipo que
-sobre-rinde su racha (Noruega 8-0-0 → +52) llega mejor de lo que su historia
-sugiere; uno en baja (Brasil → −43) llega peor. Premia *sobre-rendimiento*, no
-puntos brutos. Tabla completa: `python analizar.py clasificacion`. Se desactiva
-con `--sin-forma`.
+La intuición de sumar un bonus por "momentum" (cómo clasificó cada equipo, su
+racha reciente) es natural — y **los datos dicen que no sirve**. `auditar_modelo.py`
+ajustó el peso de esa señal en una ventana de tuning (6.077 partidos, 2016–2022)
+y lo evaluó una sola vez en test (3.539 partidos, 2023+): **todo peso > 0 empeora
+el log-loss, monótonamente**. La razón es doble conteo: el Elo es dinámico y ya
+incorpora cada resultado reciente con su peso correcto; sumarle la racha de nuevo
+sobre-reacciona. El peso queda calibrado en 0 (`forma_escala` en
+`calibracion.json`) y la tabla `python analizar.py clasificacion` se mantiene
+como análisis descriptivo de cómo llegó cada equipo.
+
+### Auditoría de calibración: el modelo NO es sobreconfiado
+
+Sobre los 3.539 partidos de test, la tabla de confiabilidad (probabilidad
+predicha de victoria vs frecuencia observada, por deciles) da casi perfecta:
+
+| Predicho | Observado | N |
+|---|---|---|
+| 15.1% | 15.7% | 381 |
+| 35.2% | 35.3% | 425 |
+| 65.1% | 65.1% | 338 |
+| 84.7% | 86.4% | 286 |
+
+Cuando el modelo dice 65%, ocurre el 65% de las veces. Es decir: que el favorito
+al título tenga "solo" ~18% no es un defecto — es la varianza real de un torneo
+de 104 partidos. El factor de nitidez `t` sobre el coeficiente `b` también se
+ajustó por grid (óptimo 1.05, casi neutro), confirmando que las probabilidades
+estaban bien escaladas. Para re-auditar: `python auditar_modelo.py`.
 
 > Ya implementado: localía (`--local`), Elo automático desde el histórico,
 > calibración con resultados reales (`calibrar.py`), simulador del Mundial con

@@ -125,24 +125,24 @@ VENTANA_CLASIFICACION = ("2023-01-01", "2026-04-01")  # ciclo de eliminatorias d
 
 
 def forma_clasificacion(equipos: list[str]) -> dict[str, dict]:
-    """Forma reciente de cada mundialista: rendimiento real vs esperado por Elo,
-    con más peso a los partidos más recientes (inercia/momentum).
+    """Campaña y forma reciente de cada mundialista: rendimiento real vs esperado por Elo.
 
-    Recorre el histórico recalculando el Elo partido a partido. En la ventana del
-    ciclo 2026 toma los partidos OFICIALES de cada equipo (eliminatorias, Nations
-    League, Copa América/Euro, etc., sin amistosos) y, para cada uno, mide la
-    diferencia entre el resultado real (1/0.5/0) y el esperado por Elo. El promedio
-    pondera más los últimos partidos (decaimiento 0.88 por antigüedad), así un
-    equipo "caliente" pesa más que uno que arrancó bien y se apagó. Se convierte
-    en un bonus de rating acotado a ±60 Elo. Además guarda aparte el registro de
-    eliminatorias (cómo clasificó) para mostrarlo en la tabla.
+    Recorre el histórico recalculando el Elo partido a partido y mide, para los
+    partidos oficiales del ciclo 2026, la diferencia entre resultado real y
+    esperado. El PESO con que esto entra al modelo (forma_escala) no se elige a
+    mano: lo calibra auditar_modelo.py contra partidos reales. Resultado de la
+    auditoría: escala 0 — el Elo dinámico ya contiene la racha de cada equipo,
+    y sumarla de nuevo empeora el log-loss (doble conteo). La tabla queda como
+    análisis descriptivo de cómo clasificó cada uno.
     """
     from calibrar import ELO_INICIAL, k_torneo
 
-    decay = 0.88        # peso de cada partido respecto al siguiente más reciente
-    escala_bonus = 240  # convierte el delta ponderado en puntos de Elo
+    with open(os.path.join(DATA_DIR, "calibracion.json"), encoding="utf-8") as f:
+        calib = json.load(f)
+    decay = calib.get("forma_decay", 1.0)
+    escala_bonus = calib.get("forma_escala", 0.0)
     tope_bonus = 60.0
-    max_partidos = 20   # cuántos partidos recientes mirar como mucho
+    max_partidos = 20
 
     ruta = os.path.join(DATA_DIR, "results.csv")
     with open(ruta, newline="", encoding="utf-8") as f:
@@ -206,14 +206,18 @@ def forma_clasificacion(equipos: list[str]) -> dict[str, dict]:
 
 
 def aplicar_forma(ratings: dict[str, float], equipos: list[str], verboso: bool = True) -> dict[str, float]:
-    """Suma el bonus de forma reciente (con peso a los últimos partidos) al rating."""
+    """Suma el bonus de forma al rating, con el peso calibrado por auditar_modelo.py."""
     forma = forma_clasificacion(equipos)
+    if all(f["bonus"] == 0.0 for f in forma.values()):
+        if verboso:
+            print("Forma reciente: peso calibrado = 0 (el Elo dinámico ya contiene la racha; "
+                  "ver auditar_modelo.py). La tabla 'clasificacion' queda como análisis.")
+        return ratings
     if verboso:
         orden = sorted(equipos, key=lambda e: forma[e]["bonus"], reverse=True)
         arriba = ", ".join(f"{e} {forma[e]['bonus']:+.0f}" for e in orden[:3])
         abajo = ", ".join(f"{e} {forma[e]['bonus']:+.0f}" for e in orden[-3:])
-        print(f"Forma reciente aplicada (±60 Elo máx, más peso a los últimos partidos). "
-              f"En racha: {arriba}. En baja: {abajo}.")
+        print(f"Forma reciente aplicada (peso calibrado). En racha: {arriba}. En baja: {abajo}.")
     return {e: ratings[e] + forma[e]["bonus"] for e in equipos}
 
 
@@ -293,7 +297,8 @@ def asignar_terceros(slots: list[tuple[int, str]], letras: list[str]) -> dict[in
 class Simulador:
     def __init__(self, ratings: dict[str, float], calib: dict):
         self.base = ratings
-        self.a, self.b, self.c = calib["a"], calib["b"], calib["c"]
+        # nitidez: factor sobre b elegido por auditar_modelo.py (1.0 = sin cambio)
+        self.a, self.b, self.c = calib["a"], calib["b"] * calib.get("nitidez", 1.0), calib["c"]
         self.r: dict[str, float] = {}
 
     def lambdas(self, eq_a: str, eq_b: str, local_a: bool, local_b: bool = False) -> tuple[float, float]:

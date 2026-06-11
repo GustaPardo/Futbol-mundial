@@ -142,7 +142,7 @@ def lambdas_esperados(
     del plantel convertida a escala Elo. Si falta una de las dos fuentes, usa la otra.
     """
     calib = cargar_calibracion()
-    a, b, c = calib["a"], calib["b"], calib["c"]
+    a, b, c = calib["a"], calib["b"] * calib.get("nitidez", 1.0), calib["c"]
     hay_plantel = score_a is not None and score_b is not None
     hay_elo = elo_a is not None and elo_b is not None
     if not hay_plantel and not hay_elo:

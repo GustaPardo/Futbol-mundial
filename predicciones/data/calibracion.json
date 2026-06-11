@@ -5,5 +5,8 @@
   "entrenado_desde": "2010-01-01",
   "entrenado_hasta": "2023-01-01",
   "n_filas": 23256,
-  "generado": "2026-06-10"
+  "generado": "2026-06-10",
+  "forma_decay": 1.0,
+  "forma_escala": 0.0,
+  "nitidez": 1.05
 }
