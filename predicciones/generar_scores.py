@@ -44,10 +44,32 @@ ALIAS = {
     "Cape Verde": "Cape Verde",
 }
 
-# Selecciones cuyo buscador falla: ID de club de Transfermarkt directo (se saltea la búsqueda)
+# Selecciones cuyo buscador falla o devuelve un club equivocado: ID de Transfermarkt directo
 CLUB_ID_OVERRIDE = {
     "Bosnia and Herzegovina": "3446",
+    "Iran": "3582",
 }
+
+
+def elegir_club(nombre: str, consulta: str) -> dict:
+    """Busca el club/selección y elige el resultado cuyo nombre coincide con lo buscado.
+
+    El buscador de Transfermarkt a veces devuelve otro equipo primero (ej. 'Iran'
+    devolvía Francia), así que nunca tomamos el primer resultado a ciegas.
+    """
+    if nombre in CLUB_ID_OVERRIDE:
+        return {"id": CLUB_ID_OVERRIDE[nombre], "name": nombre}
+    resultados = _get(f"/clubs/search/{consulta}").get("results", [])
+    if not resultados:
+        raise ValueError("sin resultados en la búsqueda")
+    q = consulta.lower()
+    for r in resultados:
+        rn = (r.get("name") or "").lower()
+        if q in rn or rn in q or rn in nombre.lower():
+            return r
+    print(f"     ⚠ ningún resultado de '{consulta}' coincide; opciones: "
+          + ", ".join(x.get("name", "?") for x in resultados[:3]))
+    raise ValueError(f"búsqueda ambigua: el primer resultado era '{resultados[0].get('name')}'")
 
 # Palabras en el campo `status` del plantel de Transfermarkt que indican lesión
 PALABRAS_LESION = ("injur", "tear", "ruptur", "surgery", "cruciate", "torn",
@@ -174,13 +196,11 @@ def main() -> None:
     filas = []
     errores = []
     planteles: dict[str, list[dict]] = {}
+    total_jugadores = total_con_stats = 0
     for nombre in equipos:
         consulta = ALIAS.get(nombre, nombre)
         try:
-            resultados = _get(f"/clubs/search/{consulta}").get("results", [])
-            if not resultados:
-                raise ValueError("sin resultados en la búsqueda")
-            club = resultados[0]
+            club = elegir_club(nombre, consulta)
             plantel = obtener_plantel(club["id"])
             if not plantel:
                 raise ValueError(f"plantel vacío para id={club['id']}")
@@ -195,13 +215,18 @@ def main() -> None:
             if args.con_stats:
                 scores_jugadores = []
                 ajustes = []
+                con_stats = 0
                 for j in aptos:
-                    ajuste = ajuste_por_stats(obtener_stats(j["id"]))
+                    stats = obtener_stats(j["id"])
+                    con_stats += bool(stats)
+                    ajuste = ajuste_por_stats(stats)
                     ajustes.append(ajuste)
                     scores_jugadores.append(score_jugador(j) * ajuste)
                 score = score_equipo_desde_scores(scores_jugadores)
                 ajuste_medio = sum(ajustes) / len(ajustes)
-                detalle = f"ajuste medio ×{ajuste_medio:.2f}"
+                total_jugadores += len(aptos)
+                total_con_stats += con_stats
+                detalle = f"stats {con_stats}/{len(aptos)}, ajuste ×{ajuste_medio:.2f}"
             else:
                 score = score_equipo_desde_scores([score_jugador(j) for j in aptos])
                 detalle = "sin stats"
@@ -225,6 +250,13 @@ def main() -> None:
         json.dump(planteles, f, ensure_ascii=False)
 
     print(f"\nGuardado {len(filas)}/{len(equipos)} en {ruta} (+ planteles.json para analizar.py)")
+    if args.con_stats and total_jugadores:
+        pct = total_con_stats / total_jugadores
+        print(f"Stats por jugador: {total_con_stats}/{total_jugadores} ({pct:.0%})")
+        if pct < 0.5:
+            print("⚠⚠ MENOS DE LA MITAD de los jugadores devolvió stats: el endpoint")
+            print("   /players/{id}/stats está fallando. El ajuste por nivel de liga quedó")
+            print("   casi neutro. Diagnóstico: corré la celda de auto-test o !tail -30 /tmp/api.log")
     if errores:
         print("Equipos sin score (el simulador les imputa uno desde su Elo):")
         for nombre, e in errores:
